@@ -65,6 +65,11 @@ class DShap(object):
             
     def _initialize_instance(self, X, y, X_test, y_test, num_test, sources=None):
         """Loads or creates data."""
+        
+        if sources is None:
+            sources = {i:np.array([i]) for i in range(len(X))}
+        elif not isinstance(sources, dict):
+            sources = {i:np.where(sources==i)[0] for i in set(sources)}
         data_dir = os.path.join(self.directory, 'data.pkl')
         if os.path.exists(data_dir):
             data_dic = pkl.load(open(data_dir, 'rb'))
@@ -157,7 +162,7 @@ class DShap(object):
             try:
                 len(self.vals_loo)
             except:
-                self.vals_loo = self._calculate_loo_vals()
+                self.vals_loo = self._calculate_loo_vals(sources=self.sources)
                 self.save_results(overwrite=True)
         print('LOO values calculated!')
         tmc_run, g_run = True, g_run and self.model_family in ['logistic', 'NN']
@@ -166,13 +171,13 @@ class DShap(object):
                 if error(self.mem_g) < err:
                     g_run = False
                 else:
-                    self._g_shap(save_every)
+                    self._g_shap(save_every, sources=self.sources)
                     self.vals_g = np.mean(self.mem_g, 0)
             if tmc_run:
                 if error(self.mem_tmc) < err:
                     tmc_run = False
                 else:
-                    self._tmc_shap(save_every, tolerance=tolerance)
+                    self._tmc_shap(save_every, tolerance=tolerance, sources=self.sources)
                     self.vals_tmc = np.mean(self.mem_tmc, 0)
             if self.directory is not None:
                 self.save_results()
@@ -189,13 +194,20 @@ class DShap(object):
         pkl.dump({'mem_tmc': self.mem_tmc, 'idxs_tmc': self.idxs_tmc}, open(tmc_dir, 'wb'))
         pkl.dump({'mem_g': self.mem_g, 'idxs_g': self.idxs_g}, open(g_dir, 'wb'))  
         
-    def _tmc_shap(self, iterations, tolerance=None):
+    def _tmc_shap(self, iterations, tolerance=None, sources=None):
         """Runs TMC-Shapley algorithm.
         
         Args:
             iterations: Number of iterations to run.
             tolerance: Truncation tolerance. (ratio with respect to average performance.)
+            sources: If values are for sources of data points rather than
+                   individual points. In the format of an assignment array
+                   or dict.
         """
+        if sources is None:
+            sources = {i:np.array([i]) for i in range(len(self.X))}
+        elif not isinstance(sources, dict):
+            sources = {i:np.where(sources==i)[0] for i in set(sources)}
         model = self.model
         try:
             self.mean_score
@@ -207,11 +219,9 @@ class DShap(object):
         for iteration in range(iterations):
             if 10*(iteration+1)/iterations % 1 == 0:
                 print('{} out of {} TMC_Shapley iterations.'.format(iteration + 1, iterations))
-            tmc_output = self.one_iteration(tolerance=tolerance, sources=self.sources)
-            marginals.append(tmc_output[0])
-            idxs.append(tmc_output[1])
-        self.mem_tmc = np.concatenate([self.mem_tmc, np.array(marginals)])
-        self.idxs_tmc = np.concatenate([self.idxs_tmc, np.array(idxs)])
+            marginals, idxs = self.one_iteration(tolerance=tolerance, sources=sources)
+            self.mem_tmc = np.concatenate([self.mem_tmc, np.reshape(marginals, (1,-1))])
+            self.idxs_tmc = np.concatenate([self.idxs_tmc, np.reshape(idxs, (1,-1))])
         
     def _tol_mean_score(self):
         """Computes the average performance and its error using bagging."""
@@ -299,7 +309,7 @@ class DShap(object):
         """
         if sources is None:
             sources = {i:np.array([i]) for i in range(len(self.X))}
-        elif not isinstance(c, dict):
+        elif not isinstance(sources, dict):
             sources = {i:np.where(sources==i)[0] for i in set(sources)}
         address = None
         if self.directory is not None:
@@ -347,7 +357,7 @@ class DShap(object):
         """
         if sources is None:
             sources = {i:np.array([i]) for i in range(len(self.X))}
-        elif not isinstance(c, dict):
+        elif not isinstance(sources, dict):
             sources = {i:np.where(sources==i)[0] for i in set(sources)}
         print('Starting LOO score calculations!')
         if metric is None:
@@ -368,7 +378,9 @@ class DShap(object):
         """Helper method for 'merge_results' method."""
         numbers = [name.split('.')[-2].split('_')[-1]
                    for name in os.listdir(self.directory) if 'mem_{}'.format(key) in name]
-        mem, idxs = np.zeros((0, self.X.shape[0])), np.zeros((0, self.X.shape[0]))
+        mem  = np.zeros((0, self.X.shape[0]))
+        idxs_shape = (0, self.X.shape[0] if self.sources is None else len(self.sources.keys()))
+        idxs = np.zeros(idxs_shape)
         vals = np.zeros(len(self.X))
         counter = 0.
         for number in numbers:
@@ -377,6 +389,8 @@ class DShap(object):
             dic = pkl.load(open(samples_dir, 'rb'))
             mem = np.concatenate([mem, dic['mem_{}'.format(key)]])
             idxs = np.concatenate([idxs, dic['idxs_{}'.format(key)]])
+            if not len(dic['mem_{}'.format(key)]):
+                continue
             counter += len(dic['mem_{}'.format(key)])
             vals *= (counter - len(dic['mem_{}'.format(key)])) / counter
             vals += len(dic['mem_{}'.format(key)]) / counter * np.mean(mem, 0)
@@ -427,7 +441,7 @@ class DShap(object):
         vals_sources = [np.array([np.sum(val[sources[i]]) for i in range(len(sources.keys()))])
                   for val in vals]
         if len(sources.keys()) < num_plot_markers:
-            num_plot_markers = len(sources.keys())
+            num_plot_markers = len(sources.keys()) - 1
         plot_points = np.arange(0, max(len(sources.keys()) - 10, num_plot_markers),
                            max(len(sources.keys())//num_plot_markers, 1))
         perfs = [self._portion_performance(
@@ -463,7 +477,7 @@ class DShap(object):
         scores = []
         init_score = self.random_score
         for i in range(len(plot_points), 0, -1):
-            keep_idxs = np.reshape([sources[idx] for idx in idxs[plot_points[i-1]:]], -1)
+            keep_idxs = np.concatenate([sources[idx] for idx in idxs[plot_points[i-1]:]], -1)
             X_batch, y_batch = self.X[keep_idxs], self.y[keep_idxs]
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
