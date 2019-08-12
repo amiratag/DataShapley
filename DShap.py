@@ -41,7 +41,7 @@ class DShap(object):
             
         if seed is not None:
             np.random.seed(seed)
-            tf.random.set_random_seed(seed)
+            tf.random.set_seed(seed)
         self.problem = problem
         self.model_family = model_family
         self.metric = metric
