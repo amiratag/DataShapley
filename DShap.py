@@ -2,7 +2,8 @@ import matplotlib
 matplotlib.use('Agg')
 import numpy as np
 import os
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 import sys
 from shap_utils import *
 from Shapley import ShapNN
@@ -41,7 +42,7 @@ class DShap(object):
             
         if seed is not None:
             np.random.seed(seed)
-            tf.random.set_seed(seed)
+            tf.random.set_random_seed(seed)
         self.problem = problem
         self.model_family = model_family
         self.metric = metric

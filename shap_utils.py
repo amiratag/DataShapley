@@ -20,7 +20,8 @@ from Shapley import ShapNN, CShapNN
 from multiprocessing import dummy as multiprocessing
 from sklearn.metrics import roc_auc_score, f1_score
 import warnings
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 import matplotlib.pyplot as plt
         
 def convergence_plots(marginals):
